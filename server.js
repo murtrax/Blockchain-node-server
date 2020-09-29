@@ -5,7 +5,7 @@ const SmartChain = require('./node-komodo-rpc');
 
 //Komodo-RPC declarations
 config = {
-	rpchost: '54.207.152.105',
+	rpchost: '54.94.38.223',
 	rpcport: 14167,
 	rpcuser: 'user1589035635',
 	rpcpassword: 'passc21b03c080d927b161e7d74604a4ce6d35f860ac9953dc4e54f19417ce745507c0'
@@ -41,11 +41,63 @@ mongoose.connection.on('connected', () => {
 	console.log('Mongoose is connected!');
 });
 
+resetDB = () => {
+	nodeOne
+		.updateMany({ $or: [ { status: 'success' }, { status: 'copied' } ] }, { status: 'pending' })
+		.then((response) => {
+			console.log(response);
+		});
+};
+
 const sleep = (ms) => {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 };
 
-async function utxoNum(address, amount) {
+combinePendingTxs = (array, pendingTxs) => {
+	//make this global
+	let x = -1;
+	if (!array.length > 0) {
+		array[0] = {};
+		array[1] = {};
+	}
+	pendingTxs.forEach((element) => {
+		let id = [];
+		element.type === '1' ? (x = 0) : (x = 1);
+
+		if (array[x][element.address] == undefined) {
+			array[x][element.address] = { cost: 0, id: [] };
+		}
+		id = array[x][element.address].id;
+		id.push(element._id);
+
+		array[x][element.address] = {
+			cost: array[x][element.address].cost + parseFloat(element.cost) * parseInt(element.amount),
+			id: id
+		};
+	});
+	return array;
+};
+
+const purchaseStock = async (address, amount, idArray) => {
+	return sleep(5000).then(async (v) => {
+		return new Promise((resolve, reject) => {
+			komodoRPC.z_getbalance(address).then((balance) => {
+				if (balance > amount) {
+					utxoNum(
+						'zs18t53rvgl65r6tjhflj4epsxk354qzvzxl7msknye6s29l4sxne3cu3jstcl3ud43nx8xv9q87xe',
+						amount
+					).then((response) => {
+						komodoRPC.z_sendmany(address, response).then((info) => {
+							resolve({ id: idArray, opid: info, status: 'pending' });
+						});
+					});
+				}
+			});
+		});
+	});
+};
+
+function utxoNum(address, amount) {
 	return new Promise((resolve, reject) => {
 		let pendingTxs = [];
 		let x = 0;
@@ -56,8 +108,6 @@ async function utxoNum(address, amount) {
 			let remainder = amount % 500;
 			amount = amount - remainder;
 			let divisor = amount / 500;
-			console.log(divisor);
-			console.log(remainder);
 			for (x = 0; x < divisor; x++) {
 				pendingTxs.push({ address: address, amount: 500 });
 			}
@@ -69,7 +119,61 @@ async function utxoNum(address, amount) {
 	});
 }
 
-groupByKey = async (pendingTxs, key) => {
+const sellStock = async (array, amount) => {
+	return sleep(5000).then(async (v) => {
+		return new Promise((resolve, reject) => {
+			komodoRPC.z_getbalance(companyAddress).then((balance) => {
+				if (balance > amount) {
+					utxoNumSell(array).then((response) => {
+						komodoRPC.z_sendmany(companyAddress, response.pendingTxs).then((info) => {
+							resolve({ id: response.idArray, opid: info, status: 'pending' });
+						});
+					});
+				}
+			});
+		});
+	});
+};
+
+function utxoNumSell(array) {
+	return new Promise((resolve, reject) => {
+		let pendingTxs = [];
+		let address = '';
+		let amount = '';
+		let idArray = [];
+		let counter = 0;
+		array.forEach((element) => {
+			address = element.address;
+			amount = element.cost;
+			element.idArray.forEach((element) => {
+				idArray.push(element);
+			});
+			let x = 0;
+			if (amount < 500) {
+				pendingTxs.push({ address: address, amount: amount.toFixed(4) });
+				counter++;
+			} else {
+				let remainder = amount % 500;
+				amount = amount - remainder;
+				let divisor = amount / 500;
+				for (x = 0; x < divisor; x++) {
+					pendingTxs.push({ address: address, amount: 500 });
+				}
+				if (x == divisor) {
+					pendingTxs.push({ address: address, amount: remainder.toFixed(4) });
+				}
+				counter++;
+			}
+			if (counter === array.length) {
+				console.log('resolving');
+				resolve({ pendingTxs: pendingTxs, idArray: idArray });
+			}
+		});
+	});
+}
+
+//This function could be needed in the future
+groupByKey = (pendingTxs, key) => {
 	return new Promise((resolve, reject) => {
 		resolve(
 			pendingTxs.reduce((hash, obj) => {
@@ -82,96 +186,10 @@ groupByKey = async (pendingTxs, key) => {
 	});
 };
 
-combinePendingTxs = (array, pendingTxs) => {
-	if (!array.length > 0) {
-		array[0] = {};
-		array[1] = {};
-	}
-
-	pendingTxs.forEach((element) => {
-		let id = [];
-		if (element.type === '1') {
-			if (array[0][element.address] == undefined) {
-				array[0][element.address] = { cost: 0, id: [] };
-			}
-			id = array[0][element.address].id;
-			id.push(element._id);
-
-			array[0][element.address] = {
-				cost: array[0][element.address].cost + parseFloat(element.cost) * parseInt(element.amount),
-				id: id
-			};
-		} else if (element.type === '2') {
-			if (array[1][element.address] == undefined) {
-				array[1][element.address] = { cost: 0, id: [] };
-			}
-			id = array[1][element.address].id;
-			id.push(element._id);
-			array[1][element.address] = {
-				cost: array[1][element.address].cost + parseFloat(element.cost) * parseInt(element.amount),
-				id: id
-			};
-		}
-	});
-	return array;
-};
-
-const purchaseStock = async (address, amount, idArray) => {
-	return sleep(5000).then(async (v) => {
-		return new Promise((resolve, reject) => {
-			komodoRPC.z_getbalance(address).then((balance) => {
-				// console.log(balance);
-				// console.log(amount);
-				if (balance > amount) {
-					utxoNum(
-						'zs18t53rvgl65r6tjhflj4epsxk354qzvzxl7msknye6s29l4sxne3cu3jstcl3ud43nx8xv9q87xe',
-						amount
-					).then((response) => {
-						komodoRPC.z_sendmany(address, response).then((info) => {
-							// console.log(info);
-							resolve({ id: idArray, opid: info, status: 'pending' });
-						});
-					});
-				}
-			});
-		});
-	});
-};
-
-const sellStock = async (address, amount) => {
-	return sleep(5000).then(async (v) => {
-		komodoRPC.z_getbalance(address).then((balance) => {
-			console.log(balance);
-			console.log(amount);
-			if (balance > amount) {
-				utxoNum(
-					'zs18t53rvgl65r6tjhflj4epsxk354qzvzxl7msknye6s29l4sxne3cu3jstcl3ud43nx8xv9q87xe',
-					amount
-				).then((response) => {
-					komodoRPC.z_sendmany(address, response).then((info) => {
-						console.log(info);
-						return info;
-					});
-				});
-			}
-		});
-	});
-};
-
-const asyncgetOPIDStatus = async (opid) => {
-	return new Promise((resolve, reject) => {
-		komodoRPC
-			.z_getoperationstatus([ opid ])
-			.then((response) => {
-				//console.log(response);
-				resolve(response);
-			})
-			.catch((error) => console.log(error));
-	});
-};
-
-const opidFtc = async () => {
+const opidFtc = () => {
 	return new Promise(async (resolve, reject) => {
+		console.log('---------------------------');
+		console.log('Check Status Method Executed');
 		const promises = copiedArray.map(checkStatus);
 		await Promise.all(promises);
 		console.log('Done!');
@@ -179,22 +197,23 @@ const opidFtc = async () => {
 	});
 };
 
-const checkStatus = async (element, index) => {
+const checkStatus = (element, index) => {
 	return new Promise((resolve, reject) => {
 		if (element.opid) {
-			// console.log(element.opid);
-			asyncgetOPIDStatus(element.opid).then((response) => {
-				// console.log(element.txs.type);
+			asyncGetOPIDStatus(element.opid).then((response) => {
 				if (response[0].status == 'success') {
-					console.log(element.opid, response[0].status);
-					opid.push({ id: [element._id], opid: element.opid, status: 'success' });
+					console.log('Status Success', element.opid, response[0].status);
+					opid.push({ id: [ element._id ], opid: element.opid, status: 'success' });
 					resolve();
 				} else if (response[0].status == 'queued' || response[0].status == 'executing') {
-					console.log(element.opid, response[0].status);
+					console.log('Status Queue||Executing', element.opid, response[0].status);
 					temp.splice(index, index);
 					resolve();
 				} else if (response[0].status === 'failed') {
-					console.log(element.opid, response[0].status);
+					console.log('Status Fail, push to array', element.opid, response[0].status);
+					opid.push({ id: [ element._id ], opid: element.opid, status: 'retry' });
+					element.status = 'pending';
+					element.opid = '';
 					pendingArray.push(element);
 					resolve();
 				}
@@ -203,85 +222,121 @@ const checkStatus = async (element, index) => {
 	});
 };
 
-const bulkUpdate = (array, callback) => {
-	var bulk = nodeOne.collection.initializeOrderedBulkOp();
-	array.forEach((element) => {
-		console.log(element)
-		element.id.forEach((item) => {
-			if (element.status === 'success') {
-				bulk.find({ _id: item }).updateOne({ $set: { status: "success" } });
-			} else {
-				bulk.find({ _id: item }).updateOne({ $set: { opid: element.opid } });
-			}
+const asyncGetOPIDStatus = (opid) => {
+	return new Promise((resolve, reject) => {
+		komodoRPC.z_getoperationstatus([ opid ]).then((response) => {
+			resolve(response);
 		});
 	});
+};
 
-	bulk.execute(function(error) {
-		console.log('executing bulk');
-		callback('resolved');
+const bulkUpdate = (array, callback) => {
+	return new Promise((resolve, reject) => {
+		var bulk = nodeOne.collection.initializeOrderedBulkOp();
+		array.forEach((element) => {
+			element.id.forEach((item) => {
+				if (element.status === 'success') {
+					bulk.find({ _id: item }).updateOne({ $set: { status: 'success' } });
+				} else if (element.status === 'retry') {
+					bulk.find({ _id: item }).updateOne({ $set: { status: 'retry', opid: '' } });
+				} else {
+					bulk.find({ _id: item }).updateOne({ $set: { status: 'copied', opid: element.opid } });
+				}
+			});
+		});
+
+		bulk.execute(function(error) {
+			console.log('executing bulk');
+			callback('resolved');
+			resolve();
+		});
 	});
 };
 
 const execute = async () => {
-	console.log('start');
-	await nodeOne.find({ $or: [ { status: 'pending' }, { status: 'copied' } ] }).limit(5).then(async (response) => {
-		nodeOne.updateMany({ status: 'pending' }, { status: 'copied' }).then((response) => {
-			// console.log(response);
-		});
-		response.map((element) => {
-			if (element.status === 'pending') {
-				pendingArray.push(element);
-			} else {
-				copiedArray.push(element);
+	return sleep(5000).then(async (v) => {
+		console.log('start');
+		console.log('---------------------');
+		console.log('Printing PendingTxs Array');
+		console.log(pendingTxs);
+		console.log('---------------------');
+		console.log('Printing Pending Array');
+		console.log(pendingArray);
+		await nodeOne.find({ status: 'pending' }).limit(6).then(async (response) => {
+			nodeOne.find({ status: 'copied' }).then((response) => {
+				response.map((element) => {
+					if (element.status === 'copied') {
+						console.log(element._id, 'Status is Copied');
+						copiedArray.push(element);
+					}
+				});
+				console.log('---------------------');
+			});
+			response.map((element) => {
+				if (element.status === 'pending') {
+					console.log(element._id, 'Status is pending');
+					pendingArray.push(element);
+				}
+			});
+
+			pendingTxs = combinePendingTxs(pendingTxs, pendingArray);
+			pendingArray = [];
+			console.log('---------------------');
+			if (Object.keys(pendingTxs[0]).length) {
+				for (var prop in pendingTxs[0]) {
+					await purchaseStock(prop, pendingTxs[0][prop].cost, pendingTxs[0][prop].id).then((response) => {
+						console.log('Inside method purchase', response);
+						opid.push(response);
+					});
+				}
+				pendingTxs[0] = {};
 			}
-		});
 
-		pendingTxs = combinePendingTxs(pendingTxs, pendingArray);
-
-		// console.log('Printing pendingTxs array');
-		// console.log(pendingTxs);
-		// console.log('------------------------------');
-
-		if (pendingTxs[0]) {
-			for (var prop in pendingTxs[0]) {
-				let txs = {};
-				txs[prop] = pendingTxs[0][prop];
-				txs['type'] = '1';
-				await purchaseStock(prop, pendingTxs[0][prop].cost, pendingTxs[0][prop].id).then((response) => {
-					console.log('Inside execute method', response);
+			if (Object.keys(pendingTxs[1]).length) {
+				let groupedSellTxs = [];
+				let cost = 0;
+				for (var prop in pendingTxs[1]) {
+					groupedSellTxs.push({
+						address: prop,
+						cost: pendingTxs[1][prop].cost,
+						idArray: pendingTxs[1][prop].id
+					});
+					cost += parseFloat(pendingTxs[1][prop].cost);
+				}
+				await sellStock(groupedSellTxs, cost).then((response) => {
+					console.log('Inside method sell', response);
 					opid.push(response);
 				});
+				pendingTxs[1] = {};
 			}
 
-			pendingTxs[0] = {};
-		}
+			temp = copiedArray;
+			console.log('---------------------');
+			console.log('Printing opid array');
+			console.log(opid);
+			console.log('---------------------');
+			console.log('Printing Copied array');
+			console.log(copiedArray);
 
-		if (pendingTxs[1]) {
-			for (var prop in pendingTxs[1]) {
-				console.log('Insinde prop2');
-				console.log(prop, pendingTxs[1][prop]);
-				console.log('------------------------------');
-			}
-			pendingTxs[1] = {};
-		}
+			await opidFtc();
+			copiedArray = [];
+			await bulkUpdate(opid, (res) => {
+				opid = [];
+				console.log(res);
+			});
 
-		temp = copiedArray;
-		console.log('---------------------');
-		console.log('Printing opid array');
-		console.log(opid);
-		// console.log('Printing Copied Array', copiedArray);
-		// console.log('Printing Pending txs array');
-		// console.log(pendingTxs);
-
-		await opidFtc();
-		copiedArray = [];
-		bulkUpdate(opid, (res) => {
-			opid = [];
-			console.log(res);
+			console.log('---------------------');
+			console.log('Printing PendingTXS Array');
+			console.log(pendingTxs);
+			console.log('---------------------');
+			console.log('Printing Pending Array');
+			console.log(pendingArray);
+			console.log('END');
+			console.log('---------------------');
+			console.log('---------------------');
+			console.log('---------------------');
+			return 'doni boi';
 		});
-		// copiedArray = temp;
-		// console.log('Printing copied Array');
-		// console.log(temp);
 	});
 };
 
@@ -292,3 +347,4 @@ const run = async () => {
 };
 
 run();
+// resetDB()
