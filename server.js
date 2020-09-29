@@ -82,6 +82,7 @@ const purchaseStock = async (address, amount, idArray) => {
 	return sleep(5000).then(async (v) => {
 		return new Promise((resolve, reject) => {
 			komodoRPC.z_getbalance(address).then((balance) => {
+				console.log('Account Balance: ', balance, 'Cost: ', amount);
 				if (balance > amount) {
 					utxoNum(
 						'zs18t53rvgl65r6tjhflj4epsxk354qzvzxl7msknye6s29l4sxne3cu3jstcl3ud43nx8xv9q87xe',
@@ -120,9 +121,10 @@ function utxoNum(address, amount) {
 }
 
 const sellStock = async (array, amount) => {
-	return sleep(5000).then(async (v) => {
+	return sleep(500).then(async (v) => {
 		return new Promise((resolve, reject) => {
 			komodoRPC.z_getbalance(companyAddress).then((balance) => {
+				console.log('Company Balance: ', balance, 'Cost: ', amount);
 				if (balance > amount) {
 					utxoNumSell(array).then((response) => {
 						komodoRPC.z_sendmany(companyAddress, response.pendingTxs).then((info) => {
@@ -165,7 +167,6 @@ function utxoNumSell(array) {
 				counter++;
 			}
 			if (counter === array.length) {
-				console.log('resolving');
 				resolve({ pendingTxs: pendingTxs, idArray: idArray });
 			}
 		});
@@ -232,24 +233,29 @@ const asyncGetOPIDStatus = (opid) => {
 
 const bulkUpdate = (array, callback) => {
 	return new Promise((resolve, reject) => {
-		var bulk = nodeOne.collection.initializeOrderedBulkOp();
-		array.forEach((element) => {
-			element.id.forEach((item) => {
-				if (element.status === 'success') {
-					bulk.find({ _id: item }).updateOne({ $set: { status: 'success' } });
-				} else if (element.status === 'retry') {
-					bulk.find({ _id: item }).updateOne({ $set: { status: 'retry', opid: '' } });
-				} else {
-					bulk.find({ _id: item }).updateOne({ $set: { status: 'copied', opid: element.opid } });
-				}
+		if (opid.length) {
+			var bulk = nodeOne.collection.initializeOrderedBulkOp();
+			array.forEach((element) => {
+				element.id.forEach((item) => {
+					if (element.status === 'success') {
+						bulk.find({ _id: item }).updateOne({ $set: { status: 'success' } });
+					} else if (element.status === 'retry') {
+						bulk.find({ _id: item }).updateOne({ $set: { status: 'retry', opid: '' } });
+					} else {
+						bulk.find({ _id: item }).updateOne({ $set: { status: 'copied', opid: element.opid } });
+					}
+				});
 			});
-		});
 
-		bulk.execute(function(error) {
-			console.log('executing bulk');
+			bulk.execute(function(error) {
+				console.log('executing bulk');
+				callback('resolved');
+				resolve();
+			});
+		} else {
 			callback('resolved');
 			resolve();
-		});
+		}
 	});
 };
 
@@ -270,7 +276,6 @@ const execute = async () => {
 						copiedArray.push(element);
 					}
 				});
-				console.log('---------------------');
 			});
 			response.map((element) => {
 				if (element.status === 'pending') {
